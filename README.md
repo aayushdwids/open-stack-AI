@@ -87,9 +87,33 @@ GPU and done the identical thing.
 
 ## Status
 
-Early, built in the open as a deep-learning exercise — **built through, not in
-parallel**: one thin complete vertical slice end-to-end first (the eval/observability
-slice), then each stage widened. See the [roadmap](docs/ROADMAP.md).
+Built in the open as a deep-learning exercise — **built through, not in parallel**: one
+thin complete vertical slice end-to-end first (the eval/observability slice), then each
+stage widened. See the [roadmap](docs/ROADMAP.md).
+
+**Working today** (verified offline, CPU-only):
+
+- The single static Go binary (`make build`; static Linux build confirmed). `faraday daemon`
+  + CLI over a Unix socket.
+- Config load + JSON-Schema validation; the same config resolves identically across
+  `local`/`cloud`/`airgap` targets.
+- Zero-egress `gen_ai.*` telemetry → SQLite + OTLP JSON-lines; `faraday trace`.
+- OpenAI `/v1` proxy + weighted-failover router; deterministic mock backend (GPU-free) +
+  vLLM/llama.cpp proxy backends.
+- The air-gap-native agent runtime: network-isolated sandbox pool (gVisor when present,
+  else an OS-enforced local driver), MCP tool broker, plan→generate→execute→observe→repair
+  loop. **A sandboxed connect to a host-reachable listener is proven to fail.**
+- Offline eval (`code_passk` pass@k, `deterministic`, `judge`) with thresholds + CI exit codes.
+- Signed, offline-verifiable evidence bundle (eval report, cards, SBOM/AIBOM, hash-chained
+  audit log, NIST mappings).
+- Air-gap delivery: `faraday bundle create|verify|install` (digest-pinned lockfile, Ed25519,
+  tamper-refused); `faraday up` (local/airgap/cloud-plan).
+- Open-core: Ed25519 offline license + build-tag-gated enterprise `team summary`.
+- Python ML-plane services (inference launcher, agent loop, eval, common) behind the API.
+
+The full six-command quick-start below runs end-to-end on a network-disconnected laptop
+(`go test -tags e2e ./test/e2e/...`). See the slice-1 task record + deviations in
+[openspec/changes/add-eval-observability-slice/tasks.md](openspec/changes/add-eval-observability-slice/tasks.md).
 
 ## License
 

@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
+      - name: End-to-end (CPU, offline)
+        run: go test -tags e2e -count=1 ./test/e2e/...
+      - name: Static build matrix (amd64, arm64)
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "netgo osusergo" -o /tmp/faraday-amd64 ./cmd/faraday
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags "netgo osusergo" -o /tmp/faraday-arm64 ./cmd/faraday
+          file /tmp/faraday-amd64 | grep -q "statically linked"
+      - name: Enterprise build compiles
+        run: CGO_ENABLED=0 go build -tags "netgo osusergo enterprise" -o /tmp/faraday-ee ./cmd/faraday
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile ML-plane services
+        run: python -m py_compile $(find pyservices -name '*.py')
+
+  dco:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require Signed-off-by (DCO)
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          missing=0
+          for c in $(git rev-list "$base".."$head"); do
+            if ! git log -1 --format=%B "$c" | grep -q "^Signed-off-by: "; then
+              echo "Commit $c is missing a Signed-off-by trailer (DCO)"
+              missing=1
+            fi
+          done
+          exit $missing
