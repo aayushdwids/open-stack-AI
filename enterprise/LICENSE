@@ -1,0 +1,15 @@
+Faraday Enterprise — Commercial License (PROPRIETARY)
+
+Copyright (c) Faraday. All rights reserved.
+
+This directory contains the proprietary, commercially-licensed team/observability tier of
+Faraday. It is NOT covered by the Apache-2.0 license that governs the engine. Use requires
+a valid commercial license from the copyright holder.
+
+The code here is compiled into a Faraday build ONLY when the `enterprise` build tag is set.
+Default open-source builds link none of it. The tier is sold as a self-hosted license +
+support that runs inside the air-gap and cannot phone home; license validation is performed
+offline against a public key embedded in the binary (see internal/license).
+
+This placeholder license text is illustrative. Confirm final terms with counsel before
+distribution.

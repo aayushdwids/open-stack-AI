@@ -40,6 +40,8 @@ func Execute() error {
 		newEvalCmd(),
 		newTraceCmd(),
 		newEvidenceCmd(),
+		newLicenseCmd(),
+		newTeamCmd(),
 	)
 	return root.Execute()
 }

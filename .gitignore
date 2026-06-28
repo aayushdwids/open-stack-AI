@@ -1,7 +1,8 @@
 # Build artifacts
 /bin/
 /dist/
-faraday
+/faraday
+/faraday-ee
 *.test
 *.out
 

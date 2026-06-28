@@ -57,6 +57,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/trace/show", d.handleTraceShow)
 	mux.HandleFunc("POST /api/evidence/bundle", d.handleEvidenceBundle)
 	mux.HandleFunc("POST /api/spans", d.handleSpanIngest) // OTLP-style ingest from ML-plane
+	mux.HandleFunc("GET /api/team/summary", d.handleTeamSummary)
 	return mux
 }
 
@@ -198,6 +199,15 @@ func (d *Daemon) handleEvidenceBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"out": req.Out, "manifest": m})
+}
+
+func (d *Daemon) handleTeamSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := d.engine.TeamSummary()
+	if err != nil {
+		writeErr(w, 402, err.Error()) // 402 Payment Required: paid feature
+		return
+	}
+	writeJSON(w, 200, summary)
 }
 
 func (d *Daemon) handleSpanIngest(w http.ResponseWriter, r *http.Request) {

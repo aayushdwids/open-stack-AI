@@ -12,6 +12,7 @@ import (
 	"github.com/faraday-stack/faraday/internal/config"
 	"github.com/faraday-stack/faraday/internal/eval"
 	"github.com/faraday-stack/faraday/internal/evidence"
+	"github.com/faraday-stack/faraday/internal/extension"
 	"github.com/faraday-stack/faraday/internal/inference"
 	"github.com/faraday-stack/faraday/internal/mcp"
 	"github.com/faraday-stack/faraday/internal/runtime"
@@ -186,6 +187,16 @@ func (e *Engine) BuildEvidence(outPath, keyPath, identity string) (*evidence.Man
 	}
 	_, _ = e.store.AppendAudit("user", "evidence.bundle", outPath, "root="+m.RootDigest)
 	return m, nil
+}
+
+// TeamSummary returns the paid team-observability aggregation, or an error when the
+// enterprise tier is not built/licensed. Free single-user builds return a clear message.
+func (e *Engine) TeamSummary() (map[string]any, error) {
+	obs := extension.TeamObserverImpl()
+	if obs == nil {
+		return nil, fmt.Errorf("team observability is a paid feature; build with -tags enterprise and provide a team license")
+	}
+	return obs.Summary(e.store)
 }
 
 // Close releases resources.
