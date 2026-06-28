@@ -42,6 +42,8 @@ func Execute() error {
 		newEvidenceCmd(),
 		newLicenseCmd(),
 		newTeamCmd(),
+		newBundleCmd(),
+		newUpCmd(),
 	)
 	return root.Execute()
 }
