@@ -1,0 +1,10 @@
+[project]
+name = "faraday-agent"
+version = "0.1.0"
+description = "Plan->generate->execute->observe->repair reasoning loop (Python, behind the API)"
+requires-python = ">=3.10"
+dependencies = ["faraday-common"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,17 @@
+[project]
+name = "faraday-inference"
+version = "0.1.0"
+description = "Offline inference launcher (vLLM / llama.cpp) behind the Faraday /v1 surface"
+requires-python = ">=3.10"
+dependencies = ["faraday-common"]
+
+# Heavy runtimes are optional so this package imports on a CPU-only box.
+[project.optional-dependencies]
+vllm = ["vllm>=0.6"]
+
+[project.scripts]
+faraday-inference = "faraday_inference.server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
