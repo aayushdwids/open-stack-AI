@@ -1,0 +1,57 @@
+schema: spec-driven
+
+context: |
+  Project: Faraday — the open stack for AI that can't touch the internet.
+  An end-to-end, air-gap-native AI platform. Lifecycle: TRY (rent a GPU) → COMPOSE
+  (route models, wire MCP tools, orchestrate agents) → TRAIN (optional fine-tune/RL on
+  a private corpus) → OWN+AIR-GAP (run the identical stack fully offline on owned
+  hardware). Cross-cutting: OBSERVABILITY/EVAL (the paid tier).
+
+  THE SPINE: one declarative config (faraday.yaml) deploys identically whether the
+  target is a rented cloud GPU or an offline owned machine. Continuity across the
+  air-gap boundary is the product.
+
+  Architecture (locked):
+  - Engine/daemon does the real work (provision, route, orchestrate, serve). Runs with
+    no internet.
+  - CLI + daemon = a SINGLE STATIC GO BINARY (CGO_ENABLED=0, netgo/osusergo, embedded
+    CA roots, embed.FS web UI). Installs from a USB stick with zero deps.
+  - Python lives BEHIND the API for ML-touching parts (inference, training, agent
+    reasoning loop, eval harnesses), shipped as signed OCI images in the bundle.
+  - API: Connect RPC over a Unix socket for CLI/UI; OpenAI-compatible REST (/v1/*)
+    wherever inference is touched.
+  - Storage: modernc.org/sqlite (pure Go) is the universal store. Optional cgo DuckDB
+    analytics build behind a build tag for the paid aggregation tier.
+  - Telemetry from day one: every route decision, MCP/tool call, inference, retrieval,
+    agent step, and eval emits an OpenTelemetry span using gen_ai.* semantic
+    conventions. All observability/eval/monitoring reads this one stream. Exported to an
+    in-process collector → local file + SQLite. Zero egress.
+  - Centerpiece: air-gap-native agent runtime. Go control plane owns a gVisor (runsc)
+    container pool (--network=none + nftables DROP + cgroups v2), brokers MCP tool
+    calls (mark3labs/mcp-go, stdio servers), enforces the air-gap guarantee. Python owns
+    the plan→generate→execute→observe→repair reasoning loop. They meet at the MCP
+    boundary.
+  - Inference default: vLLM (GPU) + llama.cpp/llama-server GGUF (CPU fallback), one
+    OpenAI /v1 surface. Default code model: Qwen2.5-Coder-32B-Instruct (AWQ-4bit 48GB /
+    GGUF Q4_K_M for 24GB/CPU; DeepSeek-Coder-V2-Lite small tier).
+  - Bundle: OCI-layout via ORAS/skopeo, cosign offline verification (bundled pubkey +
+    SET), faraday.lock.json digest-pinned, chunked weights. create (online) → USB →
+    install (offline).
+  - Open-core: Apache-2.0 engine; proprietary team/observability tier behind a
+    //go:build enterprise tag in a separate module; DCO on contributions; Ed25519-signed
+    offline license files (pubkey hardcoded), never phones home.
+
+  First reference workload: a CODE-GEN agent (writes + executes code in the sandbox).
+  First vertical slice to complete end-to-end: the eval/observability/assurance layer.
+
+  Design philosophy: simple by default, infinitely customizable (progressive
+  disclosure). Config rule: almost nothing required, everything optional with good
+  defaults — a newcomer writes 3 lines, a power user writes 300, same schema.
+
+rules:
+  proposal:
+    - "Lead the air-gap framing: never describe the agent runtime as just an 'agent framework' — it is the air-gap-native runtime."
+    - "Flag explicitly if a locked decision creates a genuine technical problem."
+  tasks:
+    - "Every task must keep the slice end-to-end runnable; no half-built subsystems."
+    - "Telemetry emit is non-optional in any task that adds a route/tool/inference/eval path."

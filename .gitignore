@@ -1,0 +1,29 @@
+# Build artifacts
+/bin/
+/dist/
+faraday
+*.test
+*.out
+
+# Runtime data
+.faraday/
+*.db
+*.db-wal
+*.db-shm
+traces.jsonl
+*.tar.zst
+evidence.key
+*.evidence.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Local agent tooling
+.claude/
