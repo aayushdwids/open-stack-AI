@@ -1,0 +1,6 @@
+# The "3 lines" — a complete, valid config. Everything else is defaulted:
+# target=local, the bundled coder model, a code_exec tool, a gVisor sandbox with the
+# network killed (local driver fallback off-Linux), telemetry on, content capture off.
+version: faraday/v1
+agents:
+  fixer: { model: coder, tools: [code_exec] }

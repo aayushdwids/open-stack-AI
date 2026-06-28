@@ -1,0 +1,51 @@
+# Code-gen agent + offline eval. Runs GPU-free with the deterministic mock backend, so
+# the whole slice works on a CPU-only laptop with the network off. Swap target.kind to
+# `cloud` (with resources) or `airgap` — the models/agents/eval/telemetry blocks below do
+# not change. That is the spine.
+version: faraday/v1
+name: code-assistant
+
+target:
+  kind: local
+
+models:
+  coder:
+    source: qwen2.5-coder-32b
+    backend: mock            # deterministic, GPU-free; use vllm/llama_cpp on real hardware
+
+agents:
+  fixer:
+    model: coder
+    system: "You are a meticulous engineer. Return one fenced python code block."
+    tools: [code_exec]
+    max_steps: 8
+    max_repair_iterations: 3
+
+tools:
+  mcp:
+    - name: code_exec
+
+sandbox:
+  runtime: auto              # gvisor if present, else the network-isolated local driver
+  network: none              # the air-gap default: no egress from the sandbox
+  pool_size: 2
+
+eval:
+  suites:
+    - name: evalplus-mini
+      kind: code_passk
+      dataset: bundled:humanevalplus-mini
+      k: 1
+      n_samples: 1
+      threshold: { pass_rate: 0.8 }
+  ci:
+    fail_on: [threshold]
+
+telemetry:
+  capture_content: false
+
+evidence:
+  include: [eval_reports, model_card, data_card, sbom, aibom, audit_log, control_mappings]
+  control_frameworks: [nist-ai-rmf, nist-800-53]
+  sign:
+    identity: "Faraday Demo"
