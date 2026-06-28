@@ -1,0 +1,22 @@
+{
+  "name": "humanevalplus-mini",
+  "description": "A tiny, license-clean, hand-authored code-gen fixture set for offline pass@k. Each case asks for one function and ships assert-based tests (exit 0 = pass).",
+  "language": "python",
+  "cases": [
+    {
+      "id": "add",
+      "prompt": "Implement a Python function named `add(a, b)` that returns the sum of its two arguments. Return only the function in a fenced python code block.",
+      "tests": "from solution import add\nassert add(2, 3) == 5\nassert add(-1, 1) == 0\nassert add(0, 0) == 0\nprint('ok')\n"
+    },
+    {
+      "id": "reverse_string",
+      "prompt": "Implement a Python function named `reverse_string(s)` that returns the reverse of the input string. Return only the function in a fenced python code block.",
+      "tests": "from solution import reverse_string\nassert reverse_string('abc') == 'cba'\nassert reverse_string('') == ''\nassert reverse_string('a') == 'a'\nprint('ok')\n"
+    },
+    {
+      "id": "is_palindrome",
+      "prompt": "Implement a Python function named `is_palindrome(s)` that returns True if the string is a palindrome ignoring case and non-alphanumeric characters. Return only the function in a fenced python code block.",
+      "tests": "from solution import is_palindrome\nassert is_palindrome('A man, a plan, a canal: Panama') is True\nassert is_palindrome('hello') is False\nassert is_palindrome('') is True\nprint('ok')\n"
+    }
+  ]
+}

@@ -1,0 +1,309 @@
+// Package evidence assembles the air-gapped evidence bundle — the accreditation artifact:
+// a reproducible eval report, model/data cards, SBOM + AIBOM, a tamper-evident
+// hash-chained audit log, and NIST control mappings — signed with Ed25519 so it is
+// verifiable entirely offline with material carried inside the bundle.
+package evidence
+
+import (
+	"archive/tar"
+	"bytes"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"github.com/klauspost/compress/zstd"
+
+	"github.com/faraday-stack/faraday/internal/config"
+	"github.com/faraday-stack/faraday/internal/store"
+	"github.com/faraday-stack/faraday/internal/version"
+)
+
+// Builder assembles evidence bundles.
+type Builder struct {
+	st  *store.Store
+	cfg *config.Config
+}
+
+// NewBuilder constructs a Builder.
+func NewBuilder(st *store.Store, cfg *config.Config) *Builder {
+	return &Builder{st: st, cfg: cfg}
+}
+
+// Manifest pins per-file digests and the signature for offline verification.
+type Manifest struct {
+	Version    string            `json:"version"`
+	CreatedAt  string            `json:"created_at"`
+	Identity   string            `json:"identity"`
+	Files      map[string]string `json:"files"` // path -> sha256
+	RootDigest string            `json:"root_digest"`
+	PublicKey  string            `json:"public_key"` // hex ed25519 pubkey (carried with the bundle)
+	Signature  string            `json:"signature"`  // hex ed25519 sig over RootDigest
+}
+
+// Build writes a signed evidence bundle to outPath (.tar.zst). keyPath, if set, supplies
+// the Ed25519 private key; otherwise a key is generated and persisted next to the output.
+func (b *Builder) Build(outPath, keyPath, identity string) (*Manifest, error) {
+	files, err := b.collect()
+	if err != nil {
+		return nil, err
+	}
+
+	// Per-file digests + deterministic root digest.
+	manifest := Manifest{
+		Version:   version.Get().Version,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Identity:  identity,
+		Files:     map[string]string{},
+	}
+	for name, content := range files {
+		sum := sha256.Sum256(content)
+		manifest.Files[name] = hex.EncodeToString(sum[:])
+	}
+	manifest.RootDigest = rootDigest(manifest.Files)
+
+	// Sign the root digest with Ed25519.
+	priv, pub, err := loadOrCreateKey(keyPath, outPath)
+	if err != nil {
+		return nil, err
+	}
+	sig := ed25519.Sign(priv, []byte(manifest.RootDigest))
+	manifest.PublicKey = hex.EncodeToString(pub)
+	manifest.Signature = hex.EncodeToString(sig)
+
+	mjson, _ := json.MarshalIndent(manifest, "", "  ")
+	files["manifest.json"] = mjson
+
+	if err := writeTarZst(outPath, files); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+// collect gathers all evidence files as name -> content.
+func (b *Builder) collect() (map[string][]byte, error) {
+	files := map[string][]byte{}
+
+	report, err := b.evalReport()
+	if err != nil {
+		return nil, err
+	}
+	files["eval_report.json"] = report
+	files["model_card.md"] = b.modelCard()
+	files["data_card.md"] = b.dataCard()
+	files["sbom.cdx.json"] = b.sbom()
+	files["aibom.cdx.json"] = b.aibom()
+
+	audit, err := b.auditLog()
+	if err != nil {
+		return nil, err
+	}
+	files["audit_log.jsonl"] = audit
+	files["control_mappings.json"] = b.controlMappings()
+	return files, nil
+}
+
+func (b *Builder) evalReport() ([]byte, error) {
+	runs, err := b.st.ListEvalRuns(0)
+	if err != nil {
+		return nil, err
+	}
+	type runReport struct {
+		store.EvalRun
+		Results []store.EvalResultRow `json:"results"`
+	}
+	var rr []runReport
+	for _, r := range runs {
+		results, _ := b.st.EvalResults(r.ID)
+		rr = append(rr, runReport{EvalRun: r, Results: results})
+	}
+	doc := map[string]any{
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"reproducible": true,
+		"note":         "Each run pins dataset_digest, seed, and model so results re-derive offline.",
+		"runs":         rr,
+	}
+	return json.MarshalIndent(doc, "", "  ")
+}
+
+func (b *Builder) auditLog() ([]byte, error) {
+	entries, err := b.st.AuditEntries()
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	for _, e := range entries {
+		line, _ := json.Marshal(e)
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	broken, err := b.st.VerifyAuditChain()
+	if err == nil && broken != 0 {
+		buf.WriteString(fmt.Sprintf(`{"warning":"audit chain broken at seq %d"}`+"\n", broken))
+	}
+	return buf.Bytes(), nil
+}
+
+func (b *Builder) modelCard() []byte {
+	model := config.DefaultModelSource
+	for _, m := range b.cfg.Models {
+		if m.Source != "" {
+			model = m.Source
+			break
+		}
+	}
+	return []byte(fmt.Sprintf(`# Model Card
+
+- **Model**: %s
+- **Intended use**: Air-gapped code generation under the Faraday runtime.
+- **Deployment**: Offline / air-gapped; no network egress at inference or execution.
+- **Limitations**: Generated code is executed only in a network-isolated sandbox.
+- **Evaluation**: See eval_report.json (pinned datasets, seeds, model identity).
+
+Generated by Faraday %s.
+`, model, version.Get().Version))
+}
+
+func (b *Builder) dataCard() []byte {
+	var digests []string
+	for _, s := range b.cfg.Eval.Suites {
+		digests = append(digests, fmt.Sprintf("- suite %q dataset %q", s.Name, s.Dataset))
+	}
+	body := "none configured"
+	if len(digests) > 0 {
+		sort.Strings(digests)
+		body = ""
+		for _, d := range digests {
+			body += d + "\n"
+		}
+	}
+	return []byte(fmt.Sprintf("# Data Card\n\nEval datasets used (provenance pinned by digest in eval_report.json):\n\n%s\n", body))
+}
+
+func (b *Builder) sbom() []byte {
+	doc := map[string]any{
+		"bomFormat":   "CycloneDX",
+		"specVersion": "1.5",
+		"version":     1,
+		"metadata": map[string]any{
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"component": map[string]any{"type": "application", "name": "faraday", "version": version.Get().Version},
+		},
+		"components": []map[string]any{
+			{"type": "application", "name": "faraday-engine", "version": version.Get().Version},
+		},
+	}
+	out, _ := json.MarshalIndent(doc, "", "  ")
+	return out
+}
+
+func (b *Builder) aibom() []byte {
+	var comps []map[string]any
+	for name, m := range b.cfg.Models {
+		comps = append(comps, map[string]any{
+			"type": "machine-learning-model", "name": name, "version": m.Source,
+			"properties": []map[string]any{{"name": "quantization", "value": m.Quantization}},
+		})
+	}
+	doc := map[string]any{
+		"bomFormat":   "CycloneDX",
+		"specVersion": "1.5",
+		"version":     1,
+		"metadata":    map[string]any{"timestamp": time.Now().UTC().Format(time.RFC3339), "type": "ml-bom"},
+		"components":  comps,
+	}
+	out, _ := json.MarshalIndent(doc, "", "  ")
+	return out
+}
+
+func (b *Builder) controlMappings() []byte {
+	doc := map[string]any{
+		"frameworks": b.cfg.Evidence.ControlFrameworks,
+		"mappings": []map[string]any{
+			{"artifact": "eval_report.json", "controls": []string{"NIST-AI-RMF:MEASURE", "NIST-800-53:CA-2", "NIST-800-53:CA-8"}},
+			{"artifact": "audit_log.jsonl", "controls": []string{"NIST-800-53:AU-2", "NIST-800-53:AU-9", "NIST-800-53:AU-10"}},
+			{"artifact": "model_card.md", "controls": []string{"NIST-AI-RMF:MAP", "NIST-AI-RMF:GOVERN"}},
+			{"artifact": "data_card.md", "controls": []string{"NIST-AI-RMF:MAP"}},
+			{"artifact": "sbom.cdx.json", "controls": []string{"NIST-800-53:SR-4", "NIST-800-53:SA-15"}},
+			{"artifact": "aibom.cdx.json", "controls": []string{"NIST-AI-RMF:MAP", "NIST-800-53:SR-3"}},
+		},
+	}
+	out, _ := json.MarshalIndent(doc, "", "  ")
+	return out
+}
+
+func rootDigest(files map[string]string) string {
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, n := range names {
+		fmt.Fprintf(h, "%s\x00%s\n", n, files[n])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func loadOrCreateKey(keyPath, outPath string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+	if keyPath == "" {
+		keyPath = filepath.Join(filepath.Dir(outPath), "evidence.key")
+	}
+	if data, err := os.ReadFile(keyPath); err == nil {
+		seed, derr := hex.DecodeString(string(bytes.TrimSpace(data)))
+		if derr != nil || len(seed) != ed25519.SeedSize {
+			return nil, nil, fmt.Errorf("invalid evidence key at %s", keyPath)
+		}
+		priv := ed25519.NewKeyFromSeed(seed)
+		return priv, priv.Public().(ed25519.PublicKey), nil
+	}
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if dir := filepath.Dir(keyPath); dir != "" {
+		_ = os.MkdirAll(dir, 0o700)
+	}
+	_ = os.WriteFile(keyPath, []byte(hex.EncodeToString(priv.Seed())), 0o600)
+	return priv, pub, nil
+}
+
+func writeTarZst(outPath string, files map[string][]byte) error {
+	if dir := filepath.Dir(outPath); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	zw, err := zstd.NewWriter(f)
+	if err != nil {
+		return err
+	}
+	defer zw.Close()
+	tw := tar.NewWriter(zw)
+	defer tw.Close()
+
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		content := files[n]
+		hdr := &tar.Header{Name: n, Mode: 0o644, Size: int64(len(content)), ModTime: time.Unix(0, 0)}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := tw.Write(content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
